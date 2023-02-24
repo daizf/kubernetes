@@ -107,6 +107,17 @@ func (kl *Kubelet) GetActivePods() []*v1.Pod {
 	return activePods
 }
 
+func (kl *Kubelet) GetECIActivePods() []*v1.Pod {
+	if kl.enableECIEvict {
+		return kl.GetActivePods()
+	}
+	return nil
+}
+
+func (kl *Kubelet) EnableECIEvict(enable bool) {
+	kl.enableECIEvict = enable
+}
+
 // makeBlockVolumes maps the raw block devices specified in the path of the container
 // Experimental
 func (kl *Kubelet) makeBlockVolumes(pod *v1.Pod, container *v1.Container, podVolumes kubecontainer.VolumeMap, blkutil volumepathhandler.BlockVolumePathHandler) ([]kubecontainer.DeviceInfo, error) {

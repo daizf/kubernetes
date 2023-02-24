@@ -1221,6 +1221,8 @@ type Kubelet struct {
 	// Handles RuntimeClass objects for the Kubelet.
 	runtimeClassManager *runtimeclass.Manager
 
+        enableECIEvict bool
+
 	// Handles node shutdown events for the Node.
 	shutdownManager nodeshutdown.Manager
 }
@@ -2437,6 +2439,11 @@ func (kl *Kubelet) ListenAndServeReadOnly(address net.IP, port uint) {
 	server.ListenAndServeKubeletReadOnlyServer(kl, kl.resourceAnalyzer, address, port)
 }
 
+// ServeReadOnly runs the kubelet HTTP server in read-only mode.
+func (kl *Kubelet) ServeReadOnly(lis net.Listener) {
+	server.ServeKubeletReadOnlyServer(kl, kl.resourceAnalyzer, lis, &kl.kubeletConfiguration)
+}
+
 // ListenAndServePodResources runs the kubelet podresources grpc service
 func (kl *Kubelet) ListenAndServePodResources() {
 	socket, err := util.LocalEndpoint(kl.getPodResourcesDir(), podresources.Socket)
@@ -2498,4 +2505,8 @@ func getStreamingConfig(kubeCfg *kubeletconfiginternal.KubeletConfiguration, kub
 	}
 	config.Addr = net.JoinHostPort("localhost", "0")
 	return config
+}
+
+func (kl *Kubelet) SetServiceLinksLister(lister ServiceLinksLister) {
+	kl.serivceLinksLister = lister
 }
