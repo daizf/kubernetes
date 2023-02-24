@@ -69,6 +69,7 @@ type StatusPatcher interface {
 // Updates pod statuses in apiserver. Writes only when new status has changed.
 // All methods are thread-safe.
 type manager struct {
+        patcher    StatusPatcher
 	kubeClient clientset.Interface
 	podManager kubepod.Manager
 	// Map from pod UID to sync status of the corresponding pod.
@@ -196,14 +197,16 @@ func (m *manager) Start() {
 					"podUID", syncRequest.podUID,
 					"statusVersion", syncRequest.status.version,
 					"status", syncRequest.status.status)
-				m.syncPod(syncRequest.podUID, syncRequest.status)
+				m.syncPod(syncRequest.podUID, syncRequest.status, m.patcher)
 			case <-syncTicker:
 				klog.V(5).InfoS("Status Manager: syncing batch")
-				// remove any entries in the status channel since the batch will handle them
-				for i := len(m.podStatusChannel); i > 0; i-- {
-					<-m.podStatusChannel
+				if m.patcher != nil {
+					// remove any entries in the status channel since the batch will handle them
+					for i := len(m.podStatusChannel); i > 0; i-- {
+						<-m.podStatusChannel
+					}
+					m.syncBatch()
 				}
-				m.syncBatch()
 			}
 		}
 	}, 0)
@@ -667,12 +670,12 @@ func (m *manager) syncBatch() {
 
 	for _, update := range updatedStatuses {
 		klog.V(5).InfoS("Status Manager: syncPod in syncbatch", "podUID", update.podUID)
-		m.syncPod(update.podUID, update.status)
+		m.syncPod(update.podUID, update.status, m.patcher)
 	}
 }
 
 // syncPod syncs the given status with the API server. The caller must not hold the lock.
-func (m *manager) syncPod(uid types.UID, status versionedPodStatus) {
+func (m *manager) syncPod(uid types.UID, status versionedPodStatus, patcher StatusPatcher) {
 	if m.needsUpdateToChan(uid, status) {
 		select {
 		case m.pushQueue <- status.status:
