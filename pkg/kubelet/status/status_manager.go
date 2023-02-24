@@ -71,6 +71,7 @@ type manager struct {
 	// apiStatusVersions must only be accessed from the sync thread.
 	apiStatusVersions map[kubetypes.MirrorPodUID]uint64
 	podDeletionSafety PodDeletionSafetyProvider
+        pushQueue          chan v1.PodStatus
 }
 
 // PodStatusProvider knows how to provide status for a pod. It's intended to be used by other components
@@ -115,6 +116,8 @@ type Manager interface {
 	// RemoveOrphanedStatuses scans the status cache and removes any entries for pods not included in
 	// the provided podUIDs.
 	RemoveOrphanedStatuses(podUIDs map[types.UID]bool)
+
+        GetPushQueue() <-chan v1.PodStatus
 }
 
 const syncPeriod = 10 * time.Second
@@ -183,6 +186,10 @@ func (m *manager) Start() {
 			}
 		}
 	}, 0)
+}
+
+func (m *manager) GetPushQueue() <-chan v1.PodStatus {
+	return m.pushQueue
 }
 
 func (m *manager) GetPodStatus(uid types.UID) (v1.PodStatus, bool) {
@@ -645,6 +652,18 @@ func (m *manager) syncBatch() {
 
 // syncPod syncs the given status with the API server. The caller must not hold the lock.
 func (m *manager) syncPod(uid types.UID, status versionedPodStatus) {
+	if m.needsUpdateToChan(uid, status) {
+		select {
+		case m.pushQueue <- status.status:
+			klog.Infof("[syncPod] push %s PodStatus to chan success. Phase: %s", uid, status.status.Phase)
+			m.chanStatusVersions[kubetypes.MirrorPodUID(uid)] = status.version
+		default:
+			<-m.pushQueue
+			m.pushQueue <- status.status
+			klog.Warningf("[syncPod] Skipping push %s PodStatus to chan, because the channel is full", uid)
+		}
+	}
+
 	if !m.needsUpdate(uid, status) {
 		klog.V(1).InfoS("Status for pod is up-to-date; skipping", "podUID", uid)
 		return
@@ -719,6 +738,20 @@ func (m *manager) syncPod(uid types.UID, status versionedPodStatus) {
 // This method is not thread safe, and must only be accessed by the sync thread.
 func (m *manager) needsUpdate(uid types.UID, status versionedPodStatus) bool {
 	latest, ok := m.apiStatusVersions[kubetypes.MirrorPodUID(uid)]
+	if !ok || latest < status.version {
+		return true
+	}
+	pod, ok := m.podManager.GetPodByUID(uid)
+	if !ok {
+		return false
+	}
+	return m.canBeDeleted(pod, status.status)
+}
+
+// needsUpdateToChan returns whether the status is stale for the given pod UID.
+// This method is not thread safe, and must only be accessed by the sync thread.
+func (m *manager) needsUpdateToChan(uid types.UID, status versionedPodStatus) bool {
+	latest, ok := m.chanStatusVersions[kubetypes.MirrorPodUID(uid)]
 	if !ok || latest < status.version {
 		return true
 	}
