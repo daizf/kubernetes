@@ -74,6 +74,8 @@ const (
 	// VolumeDynamicallyCreatedByKey is the key of the annotation on PersistentVolume
 	// object created dynamically
 	VolumeDynamicallyCreatedByKey = "kubernetes.io/createdby"
+
+	V1StorageMediumQuota = "Quota"
 )
 
 // IsReady checks for the existence of a regular file
@@ -592,7 +594,7 @@ func GetPluginMountDir(host volume.VolumeHost, name string) string {
 // Ephemeral means the lifecycle of the volume is the same as the Pod.
 func IsLocalEphemeralVolume(volume v1.Volume) bool {
 	return volume.GitRepo != nil ||
-		(volume.EmptyDir != nil && volume.EmptyDir.Medium == v1.StorageMediumDefault) ||
+		(volume.EmptyDir != nil && (volume.EmptyDir.Medium == v1.StorageMediumDefault || volume.EmptyDir.Medium == V1StorageMediumQuota)) ||
 		volume.ConfigMap != nil
 }
 

@@ -18,8 +18,12 @@ limitations under the License.
 package stats
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
+	"time"
 
 	restful "github.com/emicklei/go-restful"
 	cadvisorapi "github.com/google/cadvisor/info/v1"
@@ -123,6 +127,7 @@ func CreateHandlers(rootPath string, provider Provider, summaryProvider SummaryP
 		handler restful.RouteFunction
 	}{
 		{"/summary", h.handleSummary},
+		{"/raw", h.handleEciStats},
 	}
 
 	for _, e := range endpoints {
@@ -135,6 +140,99 @@ func CreateHandlers(rootPath string, provider Provider, summaryProvider SummaryP
 	}
 
 	return ws
+}
+
+type statsRequest struct {
+	// The name of the container for which to request stats.
+	// Default: /
+	// +optional
+	ContainerName string `json:"containerName,omitempty"`
+
+	// Max number of stats to return.
+	// If start and end time are specified this limit is ignored.
+	// Default: 60
+	// +optional
+	NumStats int `json:"num_stats,omitempty"`
+
+	// Start time for which to query information.
+	// If omitted, the beginning of time is assumed.
+	// +optional
+	Start time.Time `json:"start,omitempty"`
+
+	// End time for which to query information.
+	// If omitted, current time is assumed.
+	// +optional
+	End time.Time `json:"end,omitempty"`
+
+	// Whether to also include information from subcontainers.
+	// Default: false.
+	// +optional
+	Subcontainers bool `json:"subcontainers,omitempty"`
+}
+
+func (r *statsRequest) cadvisorRequest() *cadvisorapi.ContainerInfoRequest {
+	return &cadvisorapi.ContainerInfoRequest{
+		NumStats: r.NumStats,
+		Start:    r.Start,
+		End:      r.End,
+	}
+}
+
+func parseStatsRequest(request *restful.Request) (statsRequest, error) {
+	// Default request.
+	query := statsRequest{
+		NumStats: 60,
+	}
+
+	err := json.NewDecoder(request.Request.Body).Decode(&query)
+	if err != nil && err != io.EOF {
+		return query, err
+	}
+	return query, nil
+}
+
+// Handles root container stats requests to /stats
+func (h *handler) handleStats(request *restful.Request, response *restful.Response) {
+	query, err := parseStatsRequest(request)
+	if err != nil {
+		handleError(response, "/stats", err)
+		return
+	}
+
+	// Root container stats.
+	statsMap, err := h.provider.GetRawContainerInfo("/", query.cadvisorRequest(), false)
+	if err != nil {
+		handleError(response, fmt.Sprintf("/stats %v", query), err)
+		return
+	}
+	writeResponse(response, statsMap["/"])
+}
+
+// 去掉无用cgroup对应监控，只返回host/pod/container监控
+func (h *handler) handleEciStats(request *restful.Request, response *restful.Response) {
+	query, err := parseStatsRequest(request)
+	if err != nil {
+		handleError(response, "/stats", err)
+		return
+	}
+	// 每次只返回一条数据
+	query.NumStats = 1
+
+	// Root container stats.
+	statsMap, err := h.provider.GetRawContainerInfo("/", query.cadvisorRequest(), true)
+	if err != nil {
+		handleError(response, fmt.Sprintf("/stats %v", query), err)
+		return
+	}
+
+	statsArr := make([]*cadvisorapi.ContainerInfo, 0)
+	for id, stats := range statsMap {
+		if id == "/" || strings.HasPrefix(id, "/kubepods/pod") ||
+			strings.HasPrefix(id, "/kubepods/besteffort/pod") || strings.HasPrefix(id, "/kubepods/burstable/pod") {
+			statsArr = append(statsArr, stats)
+		}
+	}
+	writeResponse(response, statsArr)
 }
 
 // Handles stats summary requests to /stats/summary

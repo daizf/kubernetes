@@ -17,7 +17,6 @@ limitations under the License.
 package cephfs
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,7 +29,6 @@ import (
 	utilstrings "k8s.io/utils/strings"
 
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/util"
@@ -38,11 +36,12 @@ import (
 
 // ProbeVolumePlugins is the primary entrypoint for volume plugins.
 func ProbeVolumePlugins() []volume.VolumePlugin {
-	return []volume.VolumePlugin{&cephfsPlugin{nil}}
+	return []volume.VolumePlugin{&cephfsPlugin{host: nil}}
 }
 
 type cephfsPlugin struct {
-	host volume.VolumeHost
+	host      volume.VolumeHost
+	getSecret func(namespace, name string) (*v1.Secret, error)
 }
 
 var _ volume.VolumePlugin = &cephfsPlugin{}
@@ -53,6 +52,7 @@ const (
 
 func (plugin *cephfsPlugin) Init(host volume.VolumeHost) error {
 	plugin.host = host
+	plugin.getSecret = host.GetSecretFunc()
 	return nil
 }
 
@@ -101,11 +101,16 @@ func (plugin *cephfsPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, _ volume.
 	secret := ""
 	if len(secretName) > 0 && len(secretNs) > 0 {
 		// if secret is provideded, retrieve it
-		kubeClient := plugin.host.GetKubeClient()
-		if kubeClient == nil {
-			return nil, fmt.Errorf("cannot get kube client")
-		}
-		secrets, err := kubeClient.CoreV1().Secrets(secretNs).Get(context.TODO(), secretName, metav1.GetOptions{})
+		// kubeClient := plugin.host.GetKubeClient()
+		// if kubeClient == nil {
+		// 	return nil, fmt.Errorf("Cannot get kube client")
+		// }
+		// secrets, err := kubeClient.CoreV1().Secrets(secretNs).Get(context.TODO(), secretName, metav1.GetOptions{})
+		// if err != nil {
+		// 	err = fmt.Errorf("Couldn't get secret %v/%v err: %v", secretNs, secretName, err)
+		// 	return nil, err
+		// }
+		secrets, err := plugin.getSecret(secretNs, secretName)
 		if err != nil {
 			err = fmt.Errorf("couldn't get secret %v/%v err: %w", secretNs, secretName, err)
 			return nil, err
@@ -240,23 +245,23 @@ func (cephfsVolume *cephfsMounter) SetUpAt(dir string, mounterArgs volume.Mounte
 	}
 
 	// check whether it belongs to fuse, if not, default to use kernel mount.
-	if cephfsVolume.checkFuseMount() {
-		klog.V(4).Info("CephFS fuse mount.")
-		err = cephfsVolume.execFuseMount(dir)
-		// cleanup no matter if fuse mount fail.
-		keyringPath := cephfsVolume.GetKeyringPath()
-		_, StatErr := os.Stat(keyringPath)
-		if !os.IsNotExist(StatErr) {
-			os.RemoveAll(keyringPath)
-		}
-		if err == nil {
-			// cephfs fuse mount succeeded.
-			return nil
-		}
-		// if cephfs fuse mount failed, fallback to kernel mount.
-		klog.V(2).Infof("CephFS fuse mount failed: %v, fallback to kernel mount.", err)
+	// if cephfsVolume.checkFuseMount() {
+	// 	klog.V(4).Info("CephFS fuse mount.")
+	// 	err = cephfsVolume.execFuseMount(dir)
+	// 	// cleanup no matter if fuse mount fail.
+	// 	keyringPath := cephfsVolume.GetKeyringPath()
+	// 	_, StatErr := os.Stat(keyringPath)
+	// 	if !os.IsNotExist(StatErr) {
+	// 		// os.RemoveAll(keyringPath)
+	// 	}
+	// 	if err == nil {
+	// 		// cephfs fuse mount succeeded.
+	// 		return nil
+	// 	}
+	// 	// if cephfs fuse mount failed, fallback to kernel mount.
+	// 	klog.V(2).Infof("CephFS fuse mount failed: %v, fallback to kernel mount.", err)
 
-	}
+	// }
 	klog.V(4).Info("CephFS kernel mount.")
 
 	err = cephfsVolume.execMount(dir)
@@ -438,6 +443,10 @@ func getSecretNameAndNamespace(spec *volume.Spec, defaultNamespace string) (stri
 	if spec.Volume != nil && spec.Volume.CephFS != nil {
 		localSecretRef := spec.Volume.CephFS.SecretRef
 		if localSecretRef != nil {
+			if strings.Contains(localSecretRef.Name, ":") {
+				nsName := strings.Split(localSecretRef.Name, ":")
+				return nsName[1], nsName[0], nil
+			}
 			return localSecretRef.Name, defaultNamespace, nil
 		}
 		return "", "", nil

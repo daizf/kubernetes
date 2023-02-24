@@ -154,6 +154,6 @@ func NewWatchingSecretManager(kubeClient clientset.Interface, resyncInterval tim
 	}
 	gr := corev1.Resource("secret")
 	return &secretManager{
-		manager: manager.NewWatchBasedManager(listSecret, watchSecret, newSecret, isImmutable, gr, resyncInterval, getSecretNames),
+		manager: manager.NewWatchBasedManager(listSecret, watchSecret, newSecret, isImmutable, gr, time.Minute, getSecretNames),
 	}
 }

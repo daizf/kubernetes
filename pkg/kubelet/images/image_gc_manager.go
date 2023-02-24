@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
 
 	"k8s.io/api/core/v1"
@@ -186,7 +187,7 @@ func (im *realImageGCManager) Start() {
 		}
 		_, err := im.detectImages(ts)
 		if err != nil {
-			klog.InfoS("Failed to monitor images", "err", err)
+			klog.Warningf("[imageGCManager] Failed to monitor images: %v", err)
 		} else {
 			im.initialized = true
 		}
@@ -194,9 +195,9 @@ func (im *realImageGCManager) Start() {
 
 	// Start a goroutine periodically updates image cache.
 	go wait.Until(func() {
-		images, err := im.runtime.ListImages()
+		images, err := im.runtime.ListImages(nil)
 		if err != nil {
-			klog.InfoS("Failed to update image list", "err", err)
+			klog.Warningf("[imageGCManager] Failed to update image list: %v", err)
 		} else {
 			im.imageCache.set(images)
 		}
@@ -218,7 +219,7 @@ func (im *realImageGCManager) detectImages(detectTime time.Time) (sets.String, e
 		imagesInUse.Insert(imageRef)
 	}
 
-	images, err := im.runtime.ListImages()
+	images, err := im.runtime.ListImages(nil)
 	if err != nil {
 		return imagesInUse, err
 	}
@@ -233,6 +234,19 @@ func (im *realImageGCManager) detectImages(detectTime time.Time) (sets.String, e
 			klog.V(5).InfoS("Container uses image", "pod", klog.KRef(pod.Namespace, pod.Name), "containerName", container.Name, "containerImage", container.Image, "imageID", container.ImageID)
 			imagesInUse.Insert(container.ImageID)
 		}
+	}
+
+	imcBaseImgFilter := runtimeapi.ImageFilter{
+		Image: &runtimeapi.ImageSpec{
+			Annotations: map[string]string{
+				"eci.image.type": "imc,base",
+			},
+		},
+	}
+
+	imcImages, err := im.runtime.ListImages(&imcBaseImgFilter)
+	for _, imcBaseImage := range imcImages {
+		imagesInUse.Insert(imcBaseImage.ID)
 	}
 
 	// Add new images and record those being used.
@@ -307,7 +321,7 @@ func (im *realImageGCManager) GarbageCollect() error {
 	usagePercent := 100 - int(available*100/capacity)
 	if usagePercent >= im.policy.HighThresholdPercent {
 		amountToFree := capacity*int64(100-im.policy.LowThresholdPercent)/100 - available
-		klog.InfoS("Disk usage on image filesystem is over the high threshold, trying to free bytes down to the low threshold", "usage", usagePercent, "highThreshold", im.policy.HighThresholdPercent, "amountToFree", amountToFree, "lowThreshold", im.policy.LowThresholdPercent)
+		klog.Infof("[imageGCManager]: Disk usage on image filesystem is at %d%% which is over the high threshold (%d%%). Trying to free %d bytes down to the low threshold (%d%%).", usagePercent, im.policy.HighThresholdPercent, amountToFree, im.policy.LowThresholdPercent)
 		freed, err := im.freeSpace(amountToFree, time.Now())
 		if err != nil {
 			return err
@@ -324,7 +338,7 @@ func (im *realImageGCManager) GarbageCollect() error {
 }
 
 func (im *realImageGCManager) DeleteUnusedImages() error {
-	klog.InfoS("Attempting to delete unused images")
+	klog.Infof("attempting to delete unused images")
 	_, err := im.freeSpace(math.MaxInt64, time.Now())
 	return err
 }

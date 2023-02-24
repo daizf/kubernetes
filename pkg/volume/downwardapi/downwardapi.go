@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"k8s.io/kubernetes/pkg/eci"
+
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
@@ -267,7 +269,8 @@ func CollectData(items []v1.DownwardAPIVolumeFile, pod *v1.Pod, host volume.Volu
 			}
 		} else if fileInfo.ResourceFieldRef != nil {
 			containerName := fileInfo.ResourceFieldRef.ContainerName
-			nodeAllocatable, err := host.GetNodeAllocatable()
+			// nodeAllocatable, err := host.GetNodeAllocatable()
+			nodeAllocatable, err := eci.GetNodeAllocatableForECIPod(pod)
 			if err != nil {
 				errlist = append(errlist, err)
 			} else if values, err := resource.ExtractResourceValueByContainerNameAndNodeAllocatable(fileInfo.ResourceFieldRef, pod, containerName, nodeAllocatable); err != nil {

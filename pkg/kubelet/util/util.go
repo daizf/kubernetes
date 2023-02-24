@@ -18,6 +18,7 @@ package util
 
 import (
 	"fmt"
+	"strconv"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -42,4 +43,12 @@ func GetNodenameForKernel(hostname string, hostDomainName string, setHostnameAsF
 		kernelHostname = fqdn
 	}
 	return kernelHostname, nil
+}
+
+func ParseResourceVersion(resourceVersion string) (uint64, error) {
+	if resourceVersion == "" || resourceVersion == "0" {
+		return 0, nil
+	}
+
+	return strconv.ParseUint(resourceVersion, 10, 64)
 }

@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -105,6 +106,17 @@ func (kl *Kubelet) GetActivePods() []*v1.Pod {
 	allPods := kl.podManager.GetPods()
 	activePods := kl.filterOutInactivePods(allPods)
 	return activePods
+}
+
+func (kl *Kubelet) GetECIActivePods() []*v1.Pod {
+	if kl.enableECIEvict {
+		return kl.GetActivePods()
+	}
+	return nil
+}
+
+func (kl *Kubelet) EnableECIEvict(enable bool) {
+	kl.enableECIEvict = enable
 }
 
 // makeBlockVolumes maps the raw block devices specified in the path of the container
@@ -332,6 +344,7 @@ func ensureHostsFile(fileName string, hostIPs []string, hostName, hostDomainName
 	var hostsFileContent []byte
 	var err error
 
+	useHostNetwork = false
 	if useHostNetwork {
 		// if Pod is using host network, read hosts file from the node's filesystem.
 		// `etcHostsPath` references the location of the hosts file on the node.
@@ -425,6 +438,9 @@ func truncatePodHostnameIfNeeded(podName, hostname string) (string, error) {
 // given that pod's spec and annotations or returns an error.
 func (kl *Kubelet) GeneratePodHostNameAndDomain(pod *v1.Pod) (string, string, error) {
 	clusterDomain := kl.dnsConfigurer.ClusterDomain
+	if domain, ok := pod.Annotations["k8s.aliyun.com/cluster-domain"]; ok {
+		clusterDomain = domain
+	}
 
 	hostname := pod.Name
 	if len(pod.Spec.Hostname) > 0 {
@@ -524,7 +540,7 @@ var masterServices = sets.NewString("kubernetes")
 
 // getServiceEnvVarMap makes a map[string]string of env vars for services a
 // pod in namespace ns should see.
-func (kl *Kubelet) getServiceEnvVarMap(ns string, enableServiceLinks bool) (map[string]string, error) {
+func (kl *Kubelet) getServiceEnvVarMap(ns string, enableServiceLinks bool, serviceLinksLister ServiceLinksLister) (map[string]string, error) {
 	var (
 		serviceMap = make(map[string]*v1.Service)
 		m          = make(map[string]string)
@@ -532,13 +548,16 @@ func (kl *Kubelet) getServiceEnvVarMap(ns string, enableServiceLinks bool) (map[
 
 	// Get all service resources from the master (via a cache),
 	// and populate them into service environment variables.
-	if kl.serviceLister == nil {
+	if serviceLinksLister == nil {
 		// Kubelets without masters (e.g. plain GCE ContainerVM) don't set env vars.
 		return m, nil
 	}
-	services, err := kl.serviceLister.List(labels.Everything())
+
+	ctx, cancel := context.WithTimeout(context.TODO(), 3*time.Second)
+	defer cancel()
+	services, err := serviceLinksLister.ListServices(ctx, ns, labels.Everything())
 	if err != nil {
-		return m, fmt.Errorf("failed to list services when setting up env vars")
+		return m, fmt.Errorf("failed to list services when setting up env vars, %q", err)
 	}
 
 	// project the services in namespace ns onto the master services
@@ -579,18 +598,7 @@ func (kl *Kubelet) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container
 	if pod.Spec.EnableServiceLinks == nil {
 		return nil, fmt.Errorf("nil pod.spec.enableServiceLinks encountered, cannot construct envvars")
 	}
-
-	// If the pod originates from the kube-api, when we know that the kube-apiserver is responding and the kubelet's credentials are valid.
-	// Knowing this, it is reasonable to wait until the service lister has synchronized at least once before attempting to build
-	// a service env var map.  This doesn't present the race below from happening entirely, but it does prevent the "obvious"
-	// failure case of services simply not having completed a list operation that can reasonably be expected to succeed.
-	// One common case this prevents is a kubelet restart reading pods before services and some pod not having the
-	// KUBERNETES_SERVICE_HOST injected because we didn't wait a short time for services to sync before proceeding.
-	// The KUBERNETES_SERVICE_HOST link is special because it is unconditionally injected into pods and is read by the
-	// in-cluster-config for pod clients
-	if !kubetypes.IsStaticPod(pod) && !kl.serviceHasSynced() {
-		return nil, fmt.Errorf("services have not yet been read at least once, cannot construct envvars")
-	}
+	serivceLinksLister := kl.serivceLinksLister
 
 	var result []kubecontainer.EnvVar
 	// Note:  These are added to the docker Config, but are not included in the checksum computed
@@ -602,7 +610,7 @@ func (kl *Kubelet) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container
 	// To avoid this users can: (1) wait between starting a service and starting; or (2) detect
 	// missing service env var and exit and be restarted; or (3) use DNS instead of env vars
 	// and keep trying to resolve the DNS name of the service (recommended).
-	serviceEnv, err := kl.getServiceEnvVarMap(pod.Namespace, *pod.Spec.EnableServiceLinks)
+	serviceEnv, err := kl.getServiceEnvVarMap(pod.Namespace, *pod.Spec.EnableServiceLinks, serivceLinksLister)
 	if err != nil {
 		return result, err
 	}
@@ -622,9 +630,6 @@ func (kl *Kubelet) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container
 			name := cm.Name
 			configMap, ok := configMaps[name]
 			if !ok {
-				if kl.kubeClient == nil {
-					return result, fmt.Errorf("couldn't get configMap %v/%v, no kubeClient defined", pod.Namespace, name)
-				}
 				optional := cm.Optional != nil && *cm.Optional
 				configMap, err = kl.configMapManager.GetConfigMap(pod.Namespace, name)
 				if err != nil {
@@ -657,9 +662,6 @@ func (kl *Kubelet) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container
 			name := s.Name
 			secret, ok := secrets[name]
 			if !ok {
-				if kl.kubeClient == nil {
-					return result, fmt.Errorf("couldn't get secret %v/%v, no kubeClient defined", pod.Namespace, name)
-				}
 				optional := s.Optional != nil && *s.Optional
 				secret, err = kl.secretManager.GetSecret(pod.Namespace, name)
 				if err != nil {
@@ -731,9 +733,11 @@ func (kl *Kubelet) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container
 				optional := cm.Optional != nil && *cm.Optional
 				configMap, ok := configMaps[name]
 				if !ok {
+					/* support eci
 					if kl.kubeClient == nil {
 						return result, fmt.Errorf("couldn't get configMap %v/%v, no kubeClient defined", pod.Namespace, name)
 					}
+					*/
 					configMap, err = kl.configMapManager.GetConfigMap(pod.Namespace, name)
 					if err != nil {
 						if errors.IsNotFound(err) && optional {
@@ -758,9 +762,11 @@ func (kl *Kubelet) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container
 				optional := s.Optional != nil && *s.Optional
 				secret, ok := secrets[name]
 				if !ok {
+					/* support eci
 					if kl.kubeClient == nil {
 						return result, fmt.Errorf("couldn't get secret %v/%v, no kubeClient defined", pod.Namespace, name)
 					}
+					*/
 					secret, err = kl.secretManager.GetSecret(pod.Namespace, name)
 					if err != nil {
 						if errors.IsNotFound(err) && optional {
@@ -1513,21 +1519,21 @@ func (kl *Kubelet) generateAPIPodStatus(pod *v1.Pod, podStatus *kubecontainer.Po
 		Status: v1.ConditionTrue,
 	})
 
-	// set HostIP and initialize PodIP/PodIPs for host network pods
-	if kl.kubeClient != nil {
-		hostIPs, err := kl.getHostIPsAnyWay()
-		if err != nil {
-			klog.V(4).InfoS("Cannot get host IPs", "err", err)
-		} else {
-			s.HostIP = hostIPs[0].String()
+	// firstly obtaining the ip address from the annotation
+	addr, addrOk := pod.Annotations["k8s.aliyun.com/pod-ip-addrs"]
+	if addrOk {
+		if hostIPs := strings.Split(addr, ","); len(hostIPs) > 0 {
+			s.HostIP = hostIPs[0]
 			if kubecontainer.IsHostNetworkPod(pod) && s.PodIP == "" {
-				s.PodIP = hostIPs[0].String()
+				s.PodIP = s.HostIP
 				s.PodIPs = []v1.PodIP{{IP: s.PodIP}}
-				if len(hostIPs) == 2 {
-					s.PodIPs = append(s.PodIPs, v1.PodIP{IP: hostIPs[1].String()})
+				if utilfeature.DefaultFeatureGate.Enabled(features.IPv6DualStack) && len(hostIPs) == 2 {
+					s.PodIPs = append(s.PodIPs, v1.PodIP{IP: hostIPs[1]})
 				}
 			}
 		}
+	} else {
+		klog.Error("can't get hostIPs")
 	}
 
 	return *s

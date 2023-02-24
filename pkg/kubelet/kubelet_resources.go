@@ -19,9 +19,12 @@ package kubelet
 import (
 	"fmt"
 
+	"github.com/pkg/errors"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/kubernetes/pkg/eci"
+
 	"k8s.io/klog/v2"
 
-	"k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/api/v1/resource"
 )
 
@@ -37,12 +40,16 @@ func (kl *Kubelet) defaultPodLimitsForDownwardAPI(pod *v1.Pod, container *v1.Con
 		return nil, nil, fmt.Errorf("invalid input, pod cannot be nil")
 	}
 
-	node, err := kl.getNodeAnyWay()
+	// node, err := kl.getNodeAnyWay()
+	// if err != nil {
+	// 	return nil, nil, fmt.Errorf("failed to find node object, expected a node")
+	// }
+	// allocatable := node.Status.Allocatable
+	allocatable, err := eci.GetNodeAllocatableForECIPod(pod)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to find node object, expected a node")
+		return nil, nil, errors.Wrap(err, "failed to find node allocatable information")
 	}
-	allocatable := node.Status.Allocatable
-	klog.InfoS("Allocatable", "allocatable", allocatable)
+	klog.Infof("allocatable: %v", allocatable)
 	outputPod := pod.DeepCopy()
 	for idx := range outputPod.Spec.Containers {
 		resource.MergeContainerResourceLimits(&outputPod.Spec.Containers[idx], allocatable)

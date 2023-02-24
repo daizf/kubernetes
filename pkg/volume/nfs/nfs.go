@@ -18,10 +18,12 @@ package nfs
 
 import (
 	"fmt"
-	netutil "k8s.io/utils/net"
 	"os"
 	"runtime"
+	"strings"
 	"time"
+
+	netutil "k8s.io/utils/net"
 
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
@@ -260,9 +262,42 @@ func (nfsMounter *nfsMounter) SetUpAt(dir string, mounterArgs volume.MounterArgs
 	if nfsMounter.readOnly {
 		options = append(options, "ro")
 	}
-	mountOptions := util.JoinMountOptions(nfsMounter.mountOptions, options)
-	err = nfsMounter.mounter.MountSensitiveWithoutSystemd(source, dir, "nfs", mountOptions, nil)
-	if err != nil {
+
+	var gerr error
+	if strings.HasSuffix(nfsMounter.server, "nas.aliyuncs.com") {
+		optimizeOptions := append(options, []string{"vers=3", "nolock", "proto=tcp", "noresvport"}...)
+		mountOptions := util.JoinMountOptions(nfsMounter.mountOptions, optimizeOptions)
+		klog.Infof("mount nfs with optimize options. src: %s, dst: %s, options %v", source, dir, mountOptions)
+
+		if err := nfsMounter.mounter.Mount(source, dir, "nfs", mountOptions); err != nil {
+			klog.Warningf("failed to mount nfs. src: %s, dst: %s, options %v, err: %s", source, dir, mountOptions, err)
+
+			mountOptions := util.JoinMountOptions(nfsMounter.mountOptions, options)
+			klog.Infof("retry mount nfs without optimize options. src: %s, dst: %s, options %v", source, dir, mountOptions)
+
+			gerr = nfsMounter.mounter.Mount(source, dir, "nfs", mountOptions)
+			if gerr != nil {
+				klog.Warningf("failed to retry mount nfs. src: %s, dst: %s, options: %v, err: %s", source, dir, mountOptions, err)
+			}
+		}
+	} else {
+		mountOptions := util.JoinMountOptions(nfsMounter.mountOptions, options)
+		klog.Infof("mount nfs without optimize options. src: %s, dst: %s, options %v", source, dir, mountOptions)
+
+		if err := nfsMounter.mounter.Mount(source, dir, "nfs", mountOptions); err != nil {
+			klog.Warningf("failed to mount nfs. src: %s, dst: %s, options %v, err: %s", source, dir, mountOptions, err)
+
+			optimizeOptions := append(options, []string{"vers=3", "nolock"}...)
+			mountOptions := util.JoinMountOptions(nfsMounter.mountOptions, optimizeOptions)
+			klog.Infof("retry mount nfs with optimize options. src: %s, dst: %s, options %v", source, dir, mountOptions)
+			gerr = nfsMounter.mounter.Mount(source, dir, "nfs", mountOptions)
+			if gerr != nil {
+				klog.Warningf("failed to retry mount nfs. src: %s, dst: %s, options: %v, err: %s", source, dir, mountOptions, err)
+			}
+		}
+	}
+
+	if gerr != nil {
 		notMnt, mntErr := mount.IsNotMountPoint(nfsMounter.mounter, dir)
 		if mntErr != nil {
 			klog.Errorf("IsNotMountPoint check failed: %v", mntErr)

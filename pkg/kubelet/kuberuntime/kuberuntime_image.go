@@ -93,10 +93,10 @@ func (m *kubeGenericRuntimeManager) GetImageRef(image kubecontainer.ImageSpec) (
 }
 
 // ListImages gets all images currently on the machine.
-func (m *kubeGenericRuntimeManager) ListImages() ([]kubecontainer.Image, error) {
+func (m *kubeGenericRuntimeManager) ListImages(filter *runtimeapi.ImageFilter) ([]kubecontainer.Image, error) {
 	var images []kubecontainer.Image
 
-	allImages, err := m.imageService.ListImages(nil)
+	allImages, err := m.imageService.ListImages(filter)
 	if err != nil {
 		klog.ErrorS(err, "Failed to list images")
 		return nil, err

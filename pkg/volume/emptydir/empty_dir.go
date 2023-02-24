@@ -22,9 +22,11 @@ import (
 	"path/filepath"
 
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/eci"
 	"k8s.io/mount-utils"
 	utilstrings "k8s.io/utils/strings"
 
+	"github.com/containerd/containerd/snapshots/quotaoverlayfs/diskquota"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,6 +46,7 @@ import (
 //
 // http://issue.k8s.io/2630
 const perm os.FileMode = 0777
+const V1StorageMediumQuota = "Quota"
 
 // ProbeVolumePlugins is the primary entrypoint for volume plugins.
 func ProbeVolumePlugins() []volume.VolumePlugin {
@@ -147,7 +150,7 @@ func (plugin *emptyDirPlugin) newMounterInternal(spec *volume.Spec, pod *v1.Pod,
 	if spec.Volume.EmptyDir != nil { // Support a non-specified source as EmptyDir.
 		medium = spec.Volume.EmptyDir.Medium
 		if medium == v1.StorageMediumMemory {
-			nodeAllocatable, err := plugin.host.GetNodeAllocatable()
+			nodeAllocatable, err := eci.GetNodeAllocatableForECIPod(pod)
 			if err != nil {
 				return nil, err
 			}
@@ -265,12 +268,16 @@ func (ed *emptyDir) SetUpAt(dir string, mounterArgs volume.MounterArgs) error {
 			if err := os.RemoveAll(readyDir); err != nil && !os.IsNotExist(err) {
 				klog.Warningf("failed to remove ready dir [%s]: %v", readyDir, err)
 			}
+		} else if ed.medium == V1StorageMediumQuota {
+			return nil
 		}
 	}
 
 	switch {
 	case ed.medium == v1.StorageMediumDefault:
 		err = ed.setupDir(dir)
+	case ed.medium == V1StorageMediumQuota:
+		err = ed.setupQuotaDir(dir, mounterArgs)
 	case ed.medium == v1.StorageMediumMemory:
 		err = ed.setupTmpfs(dir)
 	case v1helper.IsHugePageMedium(ed.medium):
@@ -462,6 +469,21 @@ func (ed *emptyDir) setupDir(dir string) error {
 
 		if fileinfo.Mode().Perm() != perm.Perm() {
 			klog.Errorf("Expected directory %q permissions to be: %s; got: %s", dir, perm.Perm(), fileinfo.Mode().Perm())
+		}
+	}
+
+	return nil
+}
+
+func (ed *emptyDir) setupQuotaDir(dir string, mounterArgs volume.MounterArgs) error {
+	if err := ed.setupDir(dir); err != nil {
+		return err
+	}
+
+	// setup common quota with rootfs
+	if mounterArgs.DesiredSize != nil && mounterArgs.DesiredSize.Value() > 0 {
+		if err := diskquota.SetDiskQuotaBytes(dir, mounterArgs.DesiredSize.Value(), diskquota.QuotaMinID); err != nil {
+			return fmt.Errorf("SetDiskQuotaBytes fail: %s", err.Error())
 		}
 	}
 

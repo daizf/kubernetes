@@ -17,7 +17,6 @@ limitations under the License.
 package flexvolume
 
 import (
-	"fmt"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -49,9 +48,9 @@ func (plugin *flexVolumePlugin) NodeExpand(rsOpt volume.NodeResizeOptions) (bool
 	// the _new_ (requested) size and can find out the _current_ size from
 	// its underlying storage implementation
 
-	if rsOpt.VolumeSpec.PersistentVolume == nil {
-		return false, fmt.Errorf("PersistentVolume not found for spec: %s", rsOpt.VolumeSpec.Name())
-	}
+	//if rsOpt.VolumeSpec.PersistentVolume == nil {
+	//	return false, fmt.Errorf("PersistentVolume not found for spec: %s", rsOpt.VolumeSpec.Name())
+	//}
 
 	call := plugin.NewDriverCall(expandFSCmd)
 	call.AppendSpec(rsOpt.VolumeSpec, plugin.host, nil)

@@ -18,7 +18,6 @@ package projected
 
 import (
 	"fmt"
-
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -249,11 +248,6 @@ func (s *projectedVolumeMounter) SetUpAt(dir string, mounterArgs volume.MounterA
 func (s *projectedVolumeMounter) collectData(mounterArgs volume.MounterArgs) (map[string]volumeutil.FileProjection, error) {
 	if s.source.DefaultMode == nil {
 		return nil, fmt.Errorf("no defaultMode used, not even the default value for it")
-	}
-
-	kubeClient := s.plugin.host.GetKubeClient()
-	if kubeClient == nil {
-		return nil, fmt.Errorf("cannot setup projected volume %v because kube client is not configured", s.volName)
 	}
 
 	errlist := []error{}

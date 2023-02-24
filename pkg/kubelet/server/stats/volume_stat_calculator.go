@@ -27,11 +27,12 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/component-helpers/storage/ephemeral"
+	"k8s.io/kubernetes/pkg/volume/emptydir"
+
 	"k8s.io/klog/v2"
 	stats "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // volumeStatCalculator calculates volume metrics for a given pod periodically in the background and caches the result
@@ -156,7 +157,7 @@ func (s *volumeStatCalculator) calcAndStoreStats() {
 			}
 		}
 		volumeStats := s.parsePodVolumeStats(name, pvcRef, metric, volSpec)
-		if util.IsLocalEphemeralVolume(volSpec) {
+		if isVolumeEphemeral(volSpec) {
 			ephemeralStats = append(ephemeralStats, volumeStats)
 		} else {
 			persistentStats = append(persistentStats, volumeStats)
@@ -203,4 +204,12 @@ func (s *volumeStatCalculator) parsePodVolumeStats(podName string, pvcRef *stats
 		FsStats: stats.FsStats{Time: metric.Time, AvailableBytes: &available, CapacityBytes: &capacity,
 			UsedBytes: &used, Inodes: &inodes, InodesFree: &inodesFree, InodesUsed: &inodesUsed},
 	}
+}
+
+func isVolumeEphemeral(volume v1.Volume) bool {
+	if (volume.EmptyDir != nil && (volume.EmptyDir.Medium == v1.StorageMediumDefault || volume.EmptyDir.Medium == emptydir.V1StorageMediumQuota)) ||
+		volume.ConfigMap != nil || volume.GitRepo != nil {
+		return true
+	}
+	return false
 }

@@ -153,6 +153,6 @@ func NewWatchingConfigMapManager(kubeClient clientset.Interface, resyncInterval 
 	}
 	gr := corev1.Resource("configmap")
 	return &configMapManager{
-		manager: manager.NewWatchBasedManager(listConfigMap, watchConfigMap, newConfigMap, isImmutable, gr, resyncInterval, getConfigMapNames),
+		manager: manager.NewWatchBasedManager(listConfigMap, watchConfigMap, newConfigMap, isImmutable, gr, time.Minute, getConfigMapNames),
 	}
 }

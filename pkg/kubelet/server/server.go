@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
-	"os"
 	"reflect"
 	goruntime "runtime"
 	"strconv"
@@ -38,8 +37,9 @@ import (
 	cadvisorv2 "github.com/google/cadvisor/info/v2"
 	"github.com/google/cadvisor/metrics"
 	"google.golang.org/grpc"
+	"k8s.io/apiserver/pkg/server/routes"
+	"k8s.io/component-base/logs"
 	"k8s.io/klog/v2"
-	"k8s.io/kubernetes/pkg/kubelet/metrics/collectors"
 	"k8s.io/utils/clock"
 	netutils "k8s.io/utils/net"
 
@@ -55,11 +55,9 @@ import (
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/server/healthz"
 	"k8s.io/apiserver/pkg/server/httplog"
-	"k8s.io/apiserver/pkg/server/routes"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/apiserver/pkg/util/flushwriter"
 	"k8s.io/component-base/configz"
-	"k8s.io/component-base/logs"
 	compbasemetrics "k8s.io/component-base/metrics"
 	"k8s.io/component-base/metrics/legacyregistry"
 	podresourcesapi "k8s.io/kubelet/pkg/apis/podresources/v1"
@@ -74,7 +72,6 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/cri/streaming"
 	"k8s.io/kubernetes/pkg/kubelet/cri/streaming/portforward"
 	remotecommandserver "k8s.io/kubernetes/pkg/kubelet/cri/streaming/remotecommand"
-	"k8s.io/kubernetes/pkg/kubelet/prober"
 	servermetrics "k8s.io/kubernetes/pkg/kubelet/server/metrics"
 	"k8s.io/kubernetes/pkg/kubelet/server/stats"
 	kubelettypes "k8s.io/kubernetes/pkg/kubelet/types"
@@ -88,6 +85,8 @@ const (
 	proberMetricsPath   = "/metrics/probes"
 	statsPath           = "/stats/"
 	logsPath            = "/logs/"
+
+	criStreamServerSock = "/run/cri-stream.sock"
 	pprofBasePath       = "/debug/pprof/"
 	debugFlagPath       = "/debug/flags/v"
 )
@@ -164,11 +163,43 @@ func ListenAndServeKubeletServer(
 		// should be called instead.
 		if err := s.ListenAndServeTLS(tlsOptions.CertFile, tlsOptions.KeyFile); err != nil {
 			klog.ErrorS(err, "Failed to listen and serve")
-			os.Exit(1)
+			//os.Exit(1)
 		}
 	} else if err := s.ListenAndServe(); err != nil {
 		klog.ErrorS(err, "Failed to listen and serve")
-		os.Exit(1)
+		//os.Exit(1)
+	}
+}
+
+// ServeKubeletServer initializes a server to respond to HTTP network requests on the Kubelet.
+func ServeKubeletServer(
+	host HostInterface,
+	resourceAnalyzer stats.ResourceAnalyzer,
+	lis net.Listener,
+	tlsOptions *TLSOptions,
+	auth AuthInterface,
+	kubeCfg *kubeletconfiginternal.KubeletConfiguration) {
+
+	handler := NewServer(host, resourceAnalyzer, auth, kubeCfg)
+	s := &http.Server{
+		Handler:        &handler,
+		IdleTimeout:    90 * time.Second, // matches http.DefaultTransport keep-alive timeout
+		ReadTimeout:    4 * 60 * time.Minute,
+		WriteTimeout:   4 * 60 * time.Minute,
+		MaxHeaderBytes: 1 << 20,
+	}
+	if tlsOptions != nil {
+		s.TLSConfig = tlsOptions.Config
+		// Passing empty strings as the cert and key files means no
+		// cert/keys are specified and GetCertificate in the TLSConfig
+		// should be called instead.
+		if err := s.ServeTLS(lis, tlsOptions.CertFile, tlsOptions.KeyFile); err != nil {
+			klog.ErrorS(err, "Failed to listen and serve")
+			//os.Exit(1)
+		}
+	} else if err := s.Serve(lis); err != nil {
+		klog.ErrorS(err, "Failed to listen and serve")
+		//os.Exit(1)
 	}
 }
 
@@ -188,7 +219,25 @@ func ListenAndServeKubeletReadOnlyServer(host HostInterface, resourceAnalyzer st
 
 	if err := server.ListenAndServe(); err != nil {
 		klog.ErrorS(err, "Failed to listen and serve")
-		os.Exit(1)
+		//os.Exit(1)
+	}
+}
+
+// ServeKubeletReadOnlyServer initializes a server to respond to HTTP network requests on the Kubelet.
+func ServeKubeletReadOnlyServer(host HostInterface, resourceAnalyzer stats.ResourceAnalyzer, lis net.Listener, kubeCfg *kubeletconfiginternal.KubeletConfiguration) {
+	s := NewServer(host, resourceAnalyzer, nil, kubeCfg)
+
+	server := &http.Server{
+		Handler:        &s,
+		IdleTimeout:    90 * time.Second, // matches http.DefaultTransport keep-alive timeout
+		ReadTimeout:    4 * 60 * time.Minute,
+		WriteTimeout:   4 * 60 * time.Minute,
+		MaxHeaderBytes: 1 << 20,
+	}
+
+	if err := server.Serve(lis); err != nil {
+		klog.ErrorS(err, "Failed to listen and serve")
+		//os.Exit(1)
 	}
 }
 
@@ -200,12 +249,12 @@ func ListenAndServePodResources(socket string, podsProvider podresources.PodsPro
 	l, err := util.CreateListener(socket)
 	if err != nil {
 		klog.ErrorS(err, "Failed to create listener for podResources endpoint")
-		os.Exit(1)
+		//os.Exit(1)
 	}
 
 	if err := server.Serve(l); err != nil {
 		klog.ErrorS(err, "Failed to serve")
-		os.Exit(1)
+		//os.Exit(1)
 	}
 }
 
@@ -336,24 +385,25 @@ func (s *Server) InstallDefaultHandlers() {
 		healthz.NamedCheck("syncloop", s.syncLoopHealthCheck),
 	)
 
-	s.addMetricsBucketMatcher("pods")
-	ws := new(restful.WebService)
-	ws.
-		Path("/pods").
-		Produces(restful.MIME_JSON)
-	ws.Route(ws.GET("").
-		To(s.getPods).
-		Operation("getPods"))
-	s.restfulCont.Add(ws)
+	// s.addMetricsBucketMatcher("pods")
+	// ws := new(restful.WebService)
+	// ws.
+	// 	Path("/pods").
+	// 	Produces(restful.MIME_JSON)
+	// ws.Route(ws.GET("").
+	// 	To(s.getPods).
+	// 	Operation("getPods"))
+	// s.restfulCont.Add(ws)
 
 	s.addMetricsBucketMatcher("stats")
 	s.restfulCont.Add(stats.CreateHandlers(statsPath, s.host, s.resourceAnalyzer))
 
 	s.addMetricsBucketMatcher("metrics")
 	s.addMetricsBucketMatcher("metrics/cadvisor")
-	s.addMetricsBucketMatcher("metrics/probes")
-	s.addMetricsBucketMatcher("metrics/resource")
-	//nolint:staticcheck // SA1019 https://github.com/kubernetes/enhancements/issues/1206
+	// s.addMetricsBucketMatcher("metrics/probes")
+	// s.addMetricsBucketMatcher("metrics/resource/v1alpha1")
+	// s.addMetricsBucketMatcher("metrics/resource")
+	//lint:ignore SA1019 https://github.com/kubernetes/enhancements/issues/1206
 	s.restfulCont.Handle(metricsPath, legacyregistry.Handler())
 
 	// cAdvisor metrics are exposed under the secured handler as well
@@ -387,22 +437,43 @@ func (s *Server) InstallDefaultHandlers() {
 		compbasemetrics.HandlerFor(r, compbasemetrics.HandlerOpts{ErrorHandling: compbasemetrics.ContinueOnError}),
 	)
 
-	s.addMetricsBucketMatcher("metrics/resource")
-	resourceRegistry := compbasemetrics.NewKubeRegistry()
-	resourceRegistry.CustomMustRegister(collectors.NewResourceMetricsCollector(s.resourceAnalyzer))
-	s.restfulCont.Handle(resourceMetricsPath,
-		compbasemetrics.HandlerFor(resourceRegistry, compbasemetrics.HandlerOpts{ErrorHandling: compbasemetrics.ContinueOnError}),
-	)
+	// deprecated endpoint which will be removed in release 1.20.0+.
+	// s.addMetricsBucketMatcher("metrics/resource/v1alpha1")
+	// v1alpha1ResourceRegistry := compbasemetrics.NewKubeRegistry()
+	// v1alpha1ResourceRegistry.CustomMustRegister(stats.NewPrometheusResourceMetricCollector(s.resourceAnalyzer, stats.Config()))
+	// s.restfulCont.Handle(path.Join(resourceMetricsPath, v1alpha1.Version),
+	// 	compbasemetrics.HandlerFor(v1alpha1ResourceRegistry, compbasemetrics.HandlerOpts{ErrorHandling: compbasemetrics.ContinueOnError}),
+	// )
+
+	// s.addMetricsBucketMatcher("metrics/resource")
+	// resourceRegistry := compbasemetrics.NewKubeRegistry()
+	// resourceRegistry.CustomMustRegister(collectors.NewResourceMetricsCollector(s.resourceAnalyzer))
+	// s.restfulCont.Handle(resourceMetricsPath,
+	// 	compbasemetrics.HandlerFor(resourceRegistry, compbasemetrics.HandlerOpts{ErrorHandling: compbasemetrics.ContinueOnError}),
+	// )
 
 	// prober metrics are exposed under a different endpoint
 
-	s.addMetricsBucketMatcher("metrics/probes")
-	p := compbasemetrics.NewKubeRegistry()
-	_ = compbasemetrics.RegisterProcessStartTime(p.Register)
-	p.MustRegister(prober.ProberResults)
-	s.restfulCont.Handle(proberMetricsPath,
-		compbasemetrics.HandlerFor(p, compbasemetrics.HandlerOpts{ErrorHandling: compbasemetrics.ContinueOnError}),
-	)
+	// s.addMetricsBucketMatcher("metrics/probes")
+	// p := compbasemetrics.NewKubeRegistry()
+	// _ = compbasemetrics.RegisterProcessStartTime(p.Register)
+	// p.MustRegister(prober.ProberResults)
+	// s.restfulCont.Handle(proberMetricsPath,
+	// 	compbasemetrics.HandlerFor(p, compbasemetrics.HandlerOpts{ErrorHandling: compbasemetrics.ContinueOnError}),
+	// )
+
+	// s.addMetricsBucketMatcher("spec")
+	// if enableCAdvisorJSONEndpoints {
+	// 	ws := new(restful.WebService)
+	// 	ws.
+	// 		Path(specPath).
+	// 		Produces(restful.MIME_JSON)
+	// 	ws.Route(ws.GET("").
+	// 		To(s.getSpec).
+	// 		Operation("getSpec").
+	// 		Writes(cadvisorapi.MachineInfo{}))
+	// 	s.restfulCont.Add(ws)
+	// }
 }
 
 // InstallDebuggingHandlers registers the HTTP request patterns that serve logs or run commands/containers
@@ -487,16 +558,48 @@ func (s *Server) InstallDebuggingHandlers() {
 	s.addMetricsBucketMatcher("configz")
 	configz.InstallHandler(s.restfulCont)
 
+	// s.addMetricsBucketMatcher("debug")
+	// handlePprofEndpoint := func(req *restful.Request, resp *restful.Response) {
+	// 	name := strings.TrimPrefix(req.Request.URL.Path, pprofBasePath)
+	// 	switch name {
+	// 	case "profile":
+	// 		pprof.Profile(resp, req.Request)
+	// 	case "symbol":
+	// 		pprof.Symbol(resp, req.Request)
+	// 	case "cmdline":
+	// 		pprof.Cmdline(resp, req.Request)
+	// 	case "trace":
+	// 		pprof.Trace(resp, req.Request)
+	// 	default:
+	// 		pprof.Index(resp, req.Request)
+	// 	}
+	// }
+	// Setup pprof handlers.
+	// ws = new(restful.WebService).Path(pprofBasePath)
+	// ws.Route(ws.GET("/{subpath:*}").To(func(req *restful.Request, resp *restful.Response) {
+	// 	handlePprofEndpoint(req, resp)
+	// })).Doc("pprof endpoint")
+	// s.restfulCont.Add(ws)
+
+	// Setup flags handlers.
+	// so far, only logging related endpoints are considered valid to add for these debug flags.
+	// s.restfulCont.Handle("/debug/flags/v", routes.StringFlagPutHandler(logs.GlogSetter))
+
 	// The /runningpods endpoint is used for testing only.
-	s.addMetricsBucketMatcher("runningpods")
-	ws = new(restful.WebService)
-	ws.
-		Path("/runningpods/").
-		Produces(restful.MIME_JSON)
-	ws.Route(ws.GET("").
-		To(s.getRunningPods).
-		Operation("getRunningPods"))
-	s.restfulCont.Add(ws)
+	// s.addMetricsBucketMatcher("runningpods")
+	// ws = new(restful.WebService)
+	// ws.
+	// 	Path("/runningpods/").
+	// 	Produces(restful.MIME_JSON)
+	// ws.Route(ws.GET("").
+	// 	To(s.getRunningPods).
+	// 	Operation("getRunningPods"))
+	// s.restfulCont.Add(ws)
+
+	// s.addMetricsBucketMatcher("cri")
+	// if criHandler != nil {
+	// 	s.restfulCont.Handle("/cri/", criHandler)
+	// }
 }
 
 // InstallDebuggingDisabledHandlers registers the HTTP request patterns that provide better error message
@@ -763,7 +866,12 @@ func (r *responder) Error(w http.ResponseWriter, req *http.Request, err error) {
 // proxyStream proxies stream to url.
 func proxyStream(w http.ResponseWriter, r *http.Request, url *url.URL) {
 	// TODO(random-liu): Set MaxBytesPerSec to throttle the stream.
-	handler := proxy.NewUpgradeAwareHandler(url, nil /*transport*/, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return net.Dial("unix", criStreamServerSock)
+		},
+	}
+	handler := proxy.NewUpgradeAwareHandler(url, transport /*transport*/, false /*wrapTransport*/, true /*upgradeRequired*/, &responder{})
 	handler.ServeHTTP(w, r)
 }
 

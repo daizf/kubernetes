@@ -22,8 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/api/core/v1"
-	storageetcd3 "k8s.io/apiserver/pkg/storage/etcd3"
+	"k8s.io/apimachinery/pkg/api/meta"
+
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -81,12 +82,25 @@ func NewObjectStore(getObject GetObjectFunc, clock clock.Clock, getTTL GetObject
 	}
 }
 
+// ObjectResourceVersion implements Versioner
+func ObjectResourceVersion(obj runtime.Object) (uint64, error) {
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return 0, err
+	}
+	version := accessor.GetResourceVersion()
+	if len(version) == 0 {
+		return 0, nil
+	}
+	return strconv.ParseUint(version, 10, 64)
+}
+
 func isObjectOlder(newObject, oldObject runtime.Object) bool {
 	if newObject == nil || oldObject == nil {
 		return false
 	}
-	newVersion, _ := storageetcd3.Versioner.ObjectResourceVersion(newObject)
-	oldVersion, _ := storageetcd3.Versioner.ObjectResourceVersion(oldObject)
+	newVersion, _ := ObjectResourceVersion(newObject)
+	oldVersion, _ := ObjectResourceVersion(oldObject)
 	return newVersion < oldVersion
 }
 

@@ -25,12 +25,13 @@ import (
 
 	libcontainercgroups "github.com/opencontainers/runc/libcontainer/cgroups"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/kubernetes/pkg/api/v1/resource"
 	v1helper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
+	"k8s.io/kubernetes/pkg/eci"
 	kubefeatures "k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/kubelet/cm/util"
 )
@@ -129,6 +130,26 @@ func ResourceConfigForPod(pod *v1.Pod, enforceCPULimits bool, cpuPeriod uint64, 
 	if limit, found := limits[v1.ResourceMemory]; found {
 		memoryLimits = limit.Value()
 	}
+	var cpuQuantity float64
+	if value, ok := pod.Annotations[eci.EciPodCpuLimitsAnno]; ok && value != "" {
+		if quantity, err := strconv.ParseFloat(value, 64); err == nil {
+			cpuQuantity = quantity
+		}
+	}
+	var memQuantity float64
+	if value, ok := pod.Annotations[eci.EciPodMemLimitsAnno]; ok && value != "" {
+		if quantity, err := strconv.ParseFloat(value, 64); err == nil {
+			memQuantity = quantity
+		}
+	}
+	enablePodLevelLimits := false
+	if cpuQuantity > 0 && memQuantity > 0 {
+		if cpuQuantity < 2 || memQuantity < 4 {
+			cpuLimits = int64(cpuQuantity * 1000)
+			memoryLimits = int64(memQuantity * 1024 * 1024 * 1024)
+			enablePodLevelLimits = true
+		}
+	}
 
 	// convert to CFS values
 	cpuShares := MilliCPUToShares(cpuRequests)
@@ -181,7 +202,7 @@ func ResourceConfigForPod(pod *v1.Pod, enforceCPULimits bool, cpuPeriod uint64, 
 
 	// build the result
 	result := &ResourceConfig{}
-	if qosClass == v1.PodQOSGuaranteed {
+	if enablePodLevelLimits || qosClass == v1.PodQOSGuaranteed {
 		result.CpuShares = &cpuShares
 		result.CpuQuota = &cpuQuota
 		result.CpuPeriod = &cpuPeriod

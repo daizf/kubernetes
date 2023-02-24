@@ -235,6 +235,14 @@ func (m *kubeGenericRuntimeManager) startContainer(podSandboxID string, podSandb
 		m.recordContainerEvent(pod, container, containerID, v1.EventTypeWarning, events.FailedToCreateContainer, "Error: %v", s.Message())
 		return s.Message(), ErrCreateContainer
 	}
+
+	//add by weixian,not block pod start
+	err = WriteLogtailStaticContainerfile(pod, podSandboxConfig, containerConfig.Metadata.Name, containerID, restartCount)
+
+	if err != nil {
+		klog.Errorf("WriteLogtailStaticContainerfile error %v", err)
+	}
+
 	err = m.internalLifecycle.PreStartContainer(pod, container, containerID)
 	if err != nil {
 		s, _ := grpcstatus.FromError(err)
@@ -317,6 +325,15 @@ func (m *kubeGenericRuntimeManager) generateContainerConfig(container *v1.Contai
 		return nil, cleanupAction, fmt.Errorf("create container log directory for container %s failed: %v", container.Name, err)
 	}
 	containerLogsPath := buildContainerLogsPath(container.Name, restartCount)
+
+	//new logtail no need keep scrape file name ,so comment this temporary.
+	//cmd := exec.Command("ln", "-sf", fmt.Sprintf("%d.log", restartCount), "stdout.log")
+	//cmd.Dir = logDir
+	//err = cmd.Run()
+	//if err != nil {
+	//	klog.Errorf("create logtail link err %v", err)
+	//}
+
 	restartCountUint32 := uint32(restartCount)
 	config := &runtimeapi.ContainerConfig{
 		Metadata: &runtimeapi.ContainerMetadata{

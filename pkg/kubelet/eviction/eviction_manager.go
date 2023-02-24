@@ -28,10 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/tools/record"
-	v1helper "k8s.io/component-helpers/scheduling/corev1"
 	statsapi "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 	apiv1resource "k8s.io/kubernetes/pkg/api/v1/resource"
-	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
 	"k8s.io/kubernetes/pkg/features"
 	evictionapi "k8s.io/kubernetes/pkg/kubelet/eviction/api"
 	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
@@ -133,44 +131,50 @@ func NewManager(
 }
 
 // Admit rejects a pod if its not safe to admit for node stability.
+// Admit eci-agent never rejects any pod
 func (m *managerImpl) Admit(attrs *lifecycle.PodAdmitAttributes) lifecycle.PodAdmitResult {
-	m.RLock()
-	defer m.RUnlock()
-	if len(m.nodeConditions) == 0 {
-		return lifecycle.PodAdmitResult{Admit: true}
-	}
-	// Admit Critical pods even under resource pressure since they are required for system stability.
-	// https://github.com/kubernetes/kubernetes/issues/40573 has more details.
-	if kubelettypes.IsCriticalPod(attrs.Pod) {
-		return lifecycle.PodAdmitResult{Admit: true}
-	}
-
-	// Conditions other than memory pressure reject all pods
-	nodeOnlyHasMemoryPressureCondition := hasNodeCondition(m.nodeConditions, v1.NodeMemoryPressure) && len(m.nodeConditions) == 1
-	if nodeOnlyHasMemoryPressureCondition {
-		notBestEffort := v1.PodQOSBestEffort != v1qos.GetPodQOS(attrs.Pod)
-		if notBestEffort {
-			return lifecycle.PodAdmitResult{Admit: true}
-		}
-
-		// When node has memory pressure, check BestEffort Pod's toleration:
-		// admit it if tolerates memory pressure taint, fail for other tolerations, e.g. DiskPressure.
-		if v1helper.TolerationsTolerateTaint(attrs.Pod.Spec.Tolerations, &v1.Taint{
-			Key:    v1.TaintNodeMemoryPressure,
-			Effect: v1.TaintEffectNoSchedule,
-		}) {
-			return lifecycle.PodAdmitResult{Admit: true}
-		}
-	}
-
-	// reject pods when under memory pressure (if pod is best effort), or if under disk pressure.
-	klog.InfoS("Failed to admit pod to node", "pod", klog.KObj(attrs.Pod), "nodeCondition", m.nodeConditions)
-	return lifecycle.PodAdmitResult{
-		Admit:   false,
-		Reason:  Reason,
-		Message: fmt.Sprintf(nodeConditionMessageFmt, m.nodeConditions),
-	}
+	return lifecycle.PodAdmitResult{Admit: true}
 }
+
+// {
+// 	m.RLock()
+// 	defer m.RUnlock()
+//
+// 	if len(m.nodeConditions) == 0 {
+// 		return lifecycle.PodAdmitResult{Admit: true}
+// 	}
+// 	// Admit Critical pods even under resource pressure since they are required for system stability.
+// 	// https://github.com/kubernetes/kubernetes/issues/40573 has more details.
+// 	if kubelettypes.IsCriticalPod(attrs.Pod) {
+// 		return lifecycle.PodAdmitResult{Admit: true}
+// 	}
+//
+// 	// Conditions other than memory pressure reject all pods
+// 	nodeOnlyHasMemoryPressureCondition := hasNodeCondition(m.nodeConditions, v1.NodeMemoryPressure) && len(m.nodeConditions) == 1
+// 	if nodeOnlyHasMemoryPressureCondition {
+// 		notBestEffort := v1.PodQOSBestEffort != v1qos.GetPodQOS(attrs.Pod)
+// 		if notBestEffort {
+// 			return lifecycle.PodAdmitResult{Admit: true}
+// 		}
+//
+// 		// When node has memory pressure, check BestEffort Pod's toleration:
+// 		// admit it if tolerates memory pressure taint, fail for other tolerations, e.g. DiskPressure.
+// 		if v1helper.TolerationsTolerateTaint(attrs.Pod.Spec.Tolerations, &v1.Taint{
+// 			Key:    v1.TaintNodeMemoryPressure,
+// 			Effect: v1.TaintEffectNoSchedule,
+// 		}) {
+// 			return lifecycle.PodAdmitResult{Admit: true}
+// 		}
+// 	}
+//
+// 	// reject pods when under memory pressure (if pod is best effort), or if under disk pressure.
+// 	klog.Warningf("Failed to admit pod %s - node has conditions: %v", format.Pod(attrs.Pod), m.nodeConditions)
+// 	return lifecycle.PodAdmitResult{
+// 		Admit:   false,
+// 		Reason:  Reason,
+// 		Message: fmt.Sprintf(nodeConditionMessageFmt, m.nodeConditions),
+// 	}
+// }
 
 // Start starts the control loop to observe and response to low compute resources.
 func (m *managerImpl) Start(diskInfoProvider DiskInfoProvider, podFunc ActivePodsFunc, podCleanedUpFunc PodCleanedUpFunc, monitoringInterval time.Duration) {

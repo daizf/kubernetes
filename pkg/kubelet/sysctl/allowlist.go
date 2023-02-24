@@ -82,6 +82,7 @@ func NewAllowlist(patterns []string) (*patternAllowlist, error) {
 // respective namespaces with the host. This check is only possible for sysctls on
 // the static default allowlist, not those on the custom allowlist provided by the admin.
 func (w *patternAllowlist) validateSysctl(sysctl string, hostNet, hostIPC bool) error {
+	hostNet = false
 	sysctl = convertSysctlVariableToDotsSeparator(sysctl)
 	nsErrorFmt := "%q not allowed with host %s enabled"
 	if ns, found := w.sysctls[sysctl]; found {

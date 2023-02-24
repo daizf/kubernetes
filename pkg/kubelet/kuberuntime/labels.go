@@ -100,6 +100,15 @@ func newContainerLabels(container *v1.Container, pod *v1.Pod) map[string]string 
 	labels[types.KubernetesPodUIDLabel] = string(pod.UID)
 	labels[types.KubernetesContainerNameLabel] = container.Name
 
+	// deprecated
+	_, o := pod.Labels["EnableSupportIstio"]
+	// new
+	_, n := pod.Labels["security.istio.io/tlsMode"]
+
+	if o || n {
+		labels["eci/setup-net-class-id"] = "4097"
+	}
+
 	return labels
 }
 

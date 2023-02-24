@@ -56,9 +56,9 @@ var _ Interface = new(cadvisorClient)
 // TODO(vmarmol): Make configurable.
 // The amount of time for which to keep stats in memory.
 const statsCacheDuration = 2 * time.Minute
-const maxHousekeepingInterval = 15 * time.Second
-const defaultHousekeepingInterval = 10 * time.Second
-const allowDynamicHousekeeping = true
+const maxHousekeepingInterval = 12 * time.Second
+const defaultHousekeepingInterval = 8 * time.Second
+const allowDynamicHousekeeping = false
 
 func init() {
 	// Override cAdvisor flag defaults.
@@ -68,6 +68,8 @@ func init() {
 		// Disable event storage by default.
 		"event_storage_event_limit": "default=0",
 		"event_storage_age_limit":   "default=0",
+		// enable cpu load reader
+		"enable_load_reader": "true",
 	}
 	for name, defaultValue := range flagOverrides {
 		if f := flag.Lookup(name); f != nil {
@@ -84,13 +86,16 @@ func New(imageFsInfoProvider ImageFsInfoProvider, rootPath string, cgroupRoots [
 	sysFs := sysfs.NewRealSysFs()
 
 	includedMetrics := cadvisormetrics.MetricSet{
-		cadvisormetrics.CpuUsageMetrics:     struct{}{},
-		cadvisormetrics.MemoryUsageMetrics:  struct{}{},
-		cadvisormetrics.CpuLoadMetrics:      struct{}{},
-		cadvisormetrics.DiskIOMetrics:       struct{}{},
-		cadvisormetrics.NetworkUsageMetrics: struct{}{},
-		cadvisormetrics.AppMetrics:          struct{}{},
-		cadvisormetrics.ProcessMetrics:      struct{}{},
+		cadvisormetrics.CpuUsageMetrics:         struct{}{},
+		cadvisormetrics.MemoryUsageMetrics:      struct{}{},
+		cadvisormetrics.CpuLoadMetrics:          struct{}{},
+		cadvisormetrics.DiskIOMetrics:           struct{}{},
+		cadvisormetrics.NetworkUsageMetrics:     struct{}{},
+		cadvisormetrics.AcceleratorUsageMetrics: struct{}{},
+		cadvisormetrics.AppMetrics:              struct{}{},
+		cadvisormetrics.ProcessMetrics:          struct{}{},
+		cadvisormetrics.NetworkTcpUsageMetrics:  struct{}{},
+		cadvisormetrics.NetworkUdpUsageMetrics:  struct{}{},
 	}
 
 	// Only add the Accelerator metrics if the feature is inactive

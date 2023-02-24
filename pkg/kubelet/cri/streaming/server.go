@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"time"
 
@@ -39,6 +40,9 @@ import (
 	remotecommandserver "k8s.io/kubernetes/pkg/kubelet/cri/streaming/remotecommand"
 )
 
+const (
+	criStreamServerSock = "/run/cri-stream.sock"
+)
 // Server is the library interface to serve the stream requests.
 type Server interface {
 	http.Handler
@@ -236,7 +240,8 @@ func (s *server) Start(stayUp bool) error {
 		return errors.New("stayUp=false is not yet implemented")
 	}
 
-	listener, err := net.Listen("tcp", s.config.Addr)
+	os.Remove(criStreamServerSock)
+	listener, err := net.Listen("unix", criStreamServerSock)
 	if err != nil {
 		return err
 	}

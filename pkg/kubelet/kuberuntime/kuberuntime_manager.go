@@ -63,7 +63,7 @@ const (
 	// The api version of kubelet runtime api
 	kubeRuntimeAPIVersion = "0.1.0"
 	// The root directory for pod logs
-	podLogsRootDirectory = "/var/log/pods"
+	podLogsRootDirectory = "/var/lib/log/pods"
 	// A minimal shutdown window for avoiding unnecessary SIGKILLs
 	minimumGracePeriodInSeconds = 2
 
@@ -799,7 +799,8 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 		var msg string
 		var err error
 
-		klog.V(4).InfoS("Creating PodSandbox for pod", "pod", klog.KObj(pod))
+		klog.V(4).Infof("Creating PodSandbox for pod %q", format.Pod(pod))
+		klog.Infof("[TimeStatistics] Msg: podSandboxCreating, Timestamp: %v\n", time.Now().UnixNano()/1000/1000)
 		metrics.StartedPodsTotal.Inc()
 		createSandboxResult := kubecontainer.NewSyncResult(kubecontainer.CreatePodSandbox, format.Pod(pod))
 		result.AddSyncResult(createSandboxResult)
@@ -837,7 +838,8 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 			m.recorder.Eventf(ref, v1.EventTypeWarning, events.FailedCreatePodSandBox, "Failed to create pod sandbox: %v", err)
 			return
 		}
-		klog.V(4).InfoS("Created PodSandbox for pod", "podSandboxID", podSandboxID, "pod", klog.KObj(pod))
+		klog.V(4).Infof("Created PodSandbox %q for pod %q", podSandboxID, format.Pod(pod))
+		klog.Infof("[TimeStatistics] Msg: podSandboxCreated, Timestamp: %v\n", time.Now().UnixNano()/1000/1000)
 
 		podSandboxStatus, err := m.runtimeService.PodSandboxStatus(podSandboxID)
 		if err != nil {
@@ -899,7 +901,7 @@ func (m *kubeGenericRuntimeManager) SyncPod(pod *v1.Pod, podStatus *kubecontaine
 		if sc.HasWindowsHostProcessRequest(pod, spec.container) {
 			metrics.StartedHostProcessContainersTotal.WithLabelValues(metricLabel).Inc()
 		}
-		klog.V(4).InfoS("Creating container in pod", "containerType", typeName, "container", spec.container, "pod", klog.KObj(pod))
+		klog.Infof("Creating %v %+v in pod %v", typeName, spec.container, format.Pod(pod))
 		// NOTE (aramase) podIPs are populated for single stack and dual stack clusters. Send only podIPs.
 		if msg, err := m.startContainer(podSandboxID, podSandboxConfig, spec, pod, podStatus, pullSecrets, podIP, podIPs); err != nil {
 			// startContainer() returns well-defined error codes that have reasonable cardinality for metrics and are

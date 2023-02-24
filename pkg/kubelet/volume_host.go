@@ -55,7 +55,7 @@ func NewInitializedVolumePluginMgr(
 	kubelet *Kubelet,
 	secretManager secret.Manager,
 	configMapManager configmap.Manager,
-	tokenManager *token.Manager,
+	tokenManager *token.EciTokenManager,
 	plugins []volume.VolumePlugin,
 	prober volume.DynamicPluginProber) (*volume.VolumePluginMgr, error) {
 
@@ -108,7 +108,7 @@ type kubeletVolumeHost struct {
 	kubelet          *Kubelet
 	volumePluginMgr  volume.VolumePluginMgr
 	secretManager    secret.Manager
-	tokenManager     *token.Manager
+	tokenManager     *token.EciTokenManager
 	configMapManager configmap.Manager
 	informerFactory  informers.SharedInformerFactory
 	csiDriverLister  storagelisters.CSIDriverLister

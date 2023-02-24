@@ -20,12 +20,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strings"
 
 	"k8s.io/klog/v2"
 	"k8s.io/mount-utils"
 
 	"k8s.io/kubernetes/pkg/volume"
-	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 func addSecretsToOptions(options map[string]string, spec *volume.Spec, namespace string, driverName string, host volume.VolumeHost) error {
@@ -38,17 +38,23 @@ func addSecretsToOptions(options map[string]string, spec *volume.Spec, namespace
 		return nil
 	}
 
-	kubeClient := host.GetKubeClient()
-	if kubeClient == nil {
-		return fmt.Errorf("cannot get kube client")
-	}
-
-	secrets, err := util.GetSecretForPV(secretNamespace, secretName, driverName, host.GetKubeClient())
+	//kubeClient := host.GetKubeClient()
+	//if kubeClient == nil {
+	//	return fmt.Errorf("Cannot get kube client")
+	//}
+	//
+	//secrets, err := util.GetSecretForPV(secretNamespace, secretName, driverName, host.GetKubeClient())
+	//if err != nil {
+	//	err = fmt.Errorf("Couldn't get secret %v/%v err: %v", secretNamespace, secretName, err)
+	//	return err
+	//}
+	getSecretFunc := host.GetSecretFunc()
+	secret, err := getSecretFunc(secretNamespace, secretName)
 	if err != nil {
 		err = fmt.Errorf("couldn't get secret %v/%v err: %w", secretNamespace, secretName, err)
 		return err
 	}
-	for name, data := range secrets {
+	for name, data := range secret.Data {
 		options[optionKeySecret+"/"+name] = base64.StdEncoding.EncodeToString([]byte(data))
 		klog.V(1).Infof("found flex volume secret info: %s", name)
 	}
@@ -80,8 +86,13 @@ func getFSType(spec *volume.Spec) (string, error) {
 
 func getSecretNameAndNamespace(spec *volume.Spec, podNamespace string) (string, string, error) {
 	if spec.Volume != nil && spec.Volume.FlexVolume != nil {
-		if spec.Volume.FlexVolume.SecretRef == nil {
+		localSecretRef := spec.Volume.FlexVolume.SecretRef
+		if localSecretRef == nil {
 			return "", "", nil
+		}
+		if strings.Contains(localSecretRef.Name, ":") {
+			nsName := strings.Split(localSecretRef.Name, ":")
+			return nsName[1], nsName[0], nil
 		}
 		return spec.Volume.FlexVolume.SecretRef.Name, podNamespace, nil
 	}

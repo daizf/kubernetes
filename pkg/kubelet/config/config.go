@@ -91,15 +91,22 @@ func (c *PodConfig) Channel(source string) chan<- interface{} {
 // SeenAllSources returns true if seenSources contains all sources in the
 // config, and also this config has received a SET message from each source.
 func (c *PodConfig) SeenAllSources(seenSources sets.String) bool {
-	if c.pods == nil {
-		return false
-	}
-	klog.V(5).InfoS("Looking for sources, have seen", "sources", c.sources.List(), "seenSources", seenSources)
-	return seenSources.HasAll(c.sources.List()...) && c.pods.seenSources(c.sources.List()...)
+	//hack by weixian for keep source ready
+	return true
+	//if c.pods == nil {
+	//	return false
+	//}
+	//klog.V(5).Infof("Looking for %v, have seen %v", c.sources.List(), seenSources)
+	//return seenSources.HasAll(c.sources.List()...) && c.pods.seenSources(c.sources.List()...)
 }
 
 // Updates returns a channel of updates to the configuration, properly denormalized.
 func (c *PodConfig) Updates() <-chan kubetypes.PodUpdate {
+	return c.updates
+}
+
+// support eci
+func (c *PodConfig) GetPodUpdateChan() chan kubetypes.PodUpdate {
 	return c.updates
 }
 

@@ -142,7 +142,7 @@ type ImageService interface {
 	// the local storage. It returns ("", nil) if the image isn't in the local storage.
 	GetImageRef(image ImageSpec) (string, error)
 	// ListImages gets all images currently on the machine.
-	ListImages() ([]Image, error)
+	ListImages(filter *runtimeapi.ImageFilter) ([]Image, error)
 	// RemoveImage removes the specified image.
 	RemoveImage(image ImageSpec) error
 	// ImageStats returns Image statistics.
