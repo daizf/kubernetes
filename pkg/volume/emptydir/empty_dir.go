@@ -26,7 +26,7 @@ import (
 	"k8s.io/mount-utils"
 	utilstrings "k8s.io/utils/strings"
 
-	"github.com/containerd/containerd/snapshots/quotaoverlayfs/diskquota"
+	//"github.com/containerd/containerd/snapshots/quotaoverlayfs/diskquota"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -475,17 +475,18 @@ func (ed *emptyDir) setupDir(dir string) error {
 	return nil
 }
 
+//daizf hack
 func (ed *emptyDir) setupQuotaDir(dir string, mounterArgs volume.MounterArgs) error {
 	if err := ed.setupDir(dir); err != nil {
 		return err
 	}
 
 	// setup common quota with rootfs
-	if mounterArgs.DesiredSize != nil && mounterArgs.DesiredSize.Value() > 0 {
-		if err := diskquota.SetDiskQuotaBytes(dir, mounterArgs.DesiredSize.Value(), diskquota.QuotaMinID); err != nil {
-			return fmt.Errorf("SetDiskQuotaBytes fail: %s", err.Error())
-		}
-	}
+	//if mounterArgs.DesiredSize != nil && mounterArgs.DesiredSize.Value() > 0 {
+	//	if err := diskquota.SetDiskQuotaBytes(dir, mounterArgs.DesiredSize.Value(), diskquota.QuotaMinID); err != nil {
+	//		return fmt.Errorf("SetDiskQuotaBytes fail: %s", err.Error())
+	//	}
+	//}
 
 	return nil
 }
