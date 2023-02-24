@@ -325,7 +325,7 @@ func (f *FakeRuntime) GetImageRef(image kubecontainer.ImageSpec) (string, error)
 	return "", f.InspectErr
 }
 
-func (f *FakeRuntime) ListImages() ([]kubecontainer.Image, error) {
+func (f *FakeRuntime) ListImages(filter *runtimeapi.ImageFilter) ([]kubecontainer.Image, error) {
 	f.Lock()
 	defer f.Unlock()
 
