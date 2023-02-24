@@ -58,6 +58,11 @@ type podStatusSyncRequest struct {
 	status versionedPodStatus
 }
 
+type StatusPatcher interface {
+	GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error)
+	PatchStatus(ctx context.Context, pod *v1.Pod, status *v1.PodStatus) (*v1.Pod, error)
+}
+
 // Updates pod statuses in apiserver. Writes only when new status has changed.
 // All methods are thread-safe.
 type manager struct {
@@ -72,6 +77,7 @@ type manager struct {
 	apiStatusVersions map[kubetypes.MirrorPodUID]uint64
         chanStatusVersions map[kubetypes.MirrorPodUID]uint64
 	podDeletionSafety PodDeletionSafetyProvider
+        containerLogsFunc  GetContainerLogsFunc
         pushQueue          chan v1.PodStatus
 }
 
@@ -90,6 +96,9 @@ type PodDeletionSafetyProvider interface {
 	// PodCouldHaveRunningContainers returns true if the pod could have running containers.
 	PodCouldHaveRunningContainers(pod *v1.Pod) bool
 }
+
+type GetContainerLogsFunc func(ctx context.Context, podFullName, containerName string, logOptions *v1.PodLogOptions, stdout, stderr io.Writer) error
+
 
 // Manager is the Source of truth for kubelet pod status, and should be kept up-to-date with
 // the latest v1.PodStatus. It also syncs updates back to the API server.
@@ -124,15 +133,23 @@ type Manager interface {
 const syncPeriod = 10 * time.Second
 
 // NewManager returns a functional Manager.
-func NewManager(kubeClient clientset.Interface, podManager kubepod.Manager, podDeletionSafety PodDeletionSafetyProvider) Manager {
+func NewManager(kubeClient clientset.Interface, podManager kubepod.Manager, podDeletionSafety PodDeletionSafetyProvider, containerLogs GetContainerLogsFunc) Manager {
 	return &manager{
 		kubeClient:        kubeClient,
 		podManager:        podManager,
 		podStatuses:       make(map[types.UID]versionedPodStatus),
 		podStatusChannel:  make(chan podStatusSyncRequest, 1000), // Buffer up to 1000 statuses
 		apiStatusVersions: make(map[kubetypes.MirrorPodUID]uint64),
+                chanStatusVersions: make(map[kubetypes.MirrorPodUID]uint64),
 		podDeletionSafety: podDeletionSafety,
+                containerLogsFunc:  containerLogs,
+		pushQueue:          make(chan v1.PodStatus, 10),
 	}
+}
+
+// SetStatusPatcher modify the status patcher of status manager dynamicly.
+func SetStatusPatcher(patcher StatusPatcher) {
+	m.patcher = patcher
 }
 
 // isPodStatusByKubeletEqual returns true if the given pod statuses are equal when non-kubelet-owned
