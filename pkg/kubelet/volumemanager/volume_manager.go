@@ -49,6 +49,7 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/operationexecutor"
 	"k8s.io/kubernetes/pkg/volume/util/types"
+        volumetypes "k8s.io/kubernetes/pkg/volume/util/types"
 	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
 )
 
@@ -153,6 +154,12 @@ type VolumeManager interface {
 	// Marks the specified volume as having successfully been reported as "in
 	// use" in the nodes's volume status.
 	MarkVolumesAsReportedInUse(volumesReportedAsInUse []v1.UniqueVolumeName)
+
+	// Marks the specified volume as needing resized
+	MarkVolumeFSRequireResize(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) error
+
+	// Gets the specified volume resize status
+	GetVolumeResizeStatus(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) (bool, error)
 }
 
 // podStateProvider can determine if a pod is is going to be terminated
@@ -565,3 +572,13 @@ func getExtraSupplementalGid(volumeGidValue string, pod *v1.Pod) (int64, bool) {
 
 	return gid, true
 }
+
+
+func (vm *volumeManager) MarkVolumeFSRequireResize(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) error {
+	return vm.actualStateOfWorld.MarkFSResizeRequired(volumeName, podName)
+}
+
+func (vm *volumeManager) GetVolumeResizeStatus(volumeName v1.UniqueVolumeName, podName volumetypes.UniquePodName) (bool, error) {
+	return vm.actualStateOfWorld.GetVolumeNeedResize(podName, volumeName)
+}
+
