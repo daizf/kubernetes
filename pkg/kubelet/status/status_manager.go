@@ -20,6 +20,7 @@ package status
 import (
 	"context"
 	"fmt"
+        "io"
 	"sort"
 	"strings"
 	"sync"
@@ -57,6 +58,8 @@ type podStatusSyncRequest struct {
 	podUID types.UID
 	status versionedPodStatus
 }
+
+var m *manager
 
 type StatusPatcher interface {
 	GetPod(ctx context.Context, namespace, name string) (*v1.Pod, error)
