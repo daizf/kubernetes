@@ -201,6 +201,9 @@ type ActualStateOfWorldMounterUpdater interface {
 	// Marks the specified volume's file system resize request is finished.
 	MarkVolumeAsResized(podName volumetypes.UniquePodName, volumeName v1.UniqueVolumeName) error
 
+	// Get the specified volume's file system resize status.
+	GetVolumeNeedResize(podName volumetypes.UniquePodName, volumeName v1.UniqueVolumeName) (bool, error)
+
 	// GetDeviceMountState returns mount state of the device in global path
 	GetDeviceMountState(volumeName v1.UniqueVolumeName) DeviceMountState
 
