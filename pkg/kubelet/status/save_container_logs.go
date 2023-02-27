@@ -38,7 +38,7 @@ type LogBackupOptions struct {
 func (m *manager) backupContainerLogs(pod *v1.Pod, options *LogBackupOptions, getLogsFunc GetContainerLogsFunc) error {
 	startTime := time.Now()
 
-	eciId, ok := pod.Annotations["k8s.aliyun.com/eci-instance-id"]
+	eciId, ok := pod.Annotations["k8s.cmecloud.cn/eci-instance-id"]
 	if !ok {
 		klog.Errorf("[backupContainerLogs] eciId not found in pod.Annotations")
 		return errors.Errorf("eciId not found in pod.Annotations")

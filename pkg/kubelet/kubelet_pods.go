@@ -438,7 +438,7 @@ func truncatePodHostnameIfNeeded(podName, hostname string) (string, error) {
 // given that pod's spec and annotations or returns an error.
 func (kl *Kubelet) GeneratePodHostNameAndDomain(pod *v1.Pod) (string, string, error) {
 	clusterDomain := kl.dnsConfigurer.ClusterDomain
-	if domain, ok := pod.Annotations["k8s.aliyun.com/cluster-domain"]; ok {
+	if domain, ok := pod.Annotations["k8s.cmecloud.cn/cluster-domain"]; ok {
 		clusterDomain = domain
 	}
 
@@ -1520,7 +1520,7 @@ func (kl *Kubelet) generateAPIPodStatus(pod *v1.Pod, podStatus *kubecontainer.Po
 	})
 
 	// firstly obtaining the ip address from the annotation
-	addr, addrOk := pod.Annotations["k8s.aliyun.com/pod-ip-addrs"]
+	addr, addrOk := pod.Annotations["k8s.cmecloud.cn/pod-ip-addrs"]
 	if addrOk {
 		if hostIPs := strings.Split(addr, ","); len(hostIPs) > 0 {
 			s.HostIP = hostIPs[0]
