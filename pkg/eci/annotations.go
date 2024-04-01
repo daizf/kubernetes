@@ -1,6 +1,6 @@
 package eci
 
 const (
-	EciPodCpuLimitsAnno = "k8s.aliyun.com/eci-instance-cpu"
-	EciPodMemLimitsAnno = "k8s.aliyun.com/eci-instance-mem"
+	EciPodCpuLimitsAnno = "k8s.cmecloud.cn/eci-instance-cpu"
+	EciPodMemLimitsAnno = "k8s.cmecloud.cn/eci-instance-mem"
 )
