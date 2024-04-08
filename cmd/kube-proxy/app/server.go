@@ -19,6 +19,7 @@ limitations under the License.
 package app
 
 import (
+        "context"
 	"errors"
 	goflag "flag"
 	"fmt"
@@ -96,6 +97,8 @@ const (
 	proxyModeIPTables    = "iptables"
 	proxyModeIPVS        = "ipvs"
 	proxyModeKernelspace = "kernelspace" //nolint:deadcode,varcheck
+
+        sockFile = "/run/container-instance/proxy.sock"
 )
 
 // proxyRun defines the interface to run a specified ProxyServer
@@ -575,6 +578,9 @@ func createClients(config componentbaseconfig.ClientConnectionConfiguration, mas
 	kubeConfig.QPS = config.QPS
 	kubeConfig.Burst = int(config.Burst)
 
+        // 通过代理
+        configProxyFunc(kubeConfig)
+
 	client, err := clientset.NewForConfig(kubeConfig)
 	if err != nil {
 		return nil, nil, err
@@ -586,6 +592,26 @@ func createClients(config componentbaseconfig.ClientConnectionConfiguration, mas
 	}
 
 	return client, eventClient.CoreV1(), nil
+}
+
+// configCommonFunc kubeconfig 通用配置
+func configCommonFunc(config *rest.Config) {
+        config.ContentType = "application/vnd.kubernetes.protobuf"
+        config.AcceptContentTypes = "application/vnd.kubernetes.protobuf,application/json"
+        config.UserAgent = "eci-launcher"
+}
+
+// configProxyFunc kubeconfig 代理配置，用于连接 proxy server
+func configProxyFunc(config *rest.Config) {
+        configCommonFunc(config)
+
+        // 除了一些通用配置，代理的客户端还需要额外的配置
+        config.Insecure = true
+        config.CAData = nil
+        config.CAFile = ""
+        config.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+                return net.Dial("unix", sockFile)
+        }
 }
 
 func serveHealthz(hz healthcheck.ProxierHealthUpdater, errCh chan error) {
